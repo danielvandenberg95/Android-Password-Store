@@ -38,7 +38,6 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
 
 import java.io.File;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 
@@ -296,19 +295,19 @@ public class PasswordStore extends AppCompatActivity {
             }
         }
 
-        final Set<String> keyIds = settings.getStringSet("openpgp_key_ids_set", new HashSet<String>());
+        final String keyIds = settings.getString("openpgp_key_id_pref", "");
 
         if (keyIds.isEmpty())
             new AlertDialog.Builder(this)
                     .setMessage(this.getResources().getString(R.string.key_dialog_text))
-                    .setPositiveButton(this.getResources().getString(R.string.dialog_positive), new DialogInterface.OnClickListener() {
+                    .setPositiveButton(this.getResources().getString(R.string.dialog_ok), new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int i) {
                             Intent intent = new Intent(activity, UserPreference.class);
                             startActivityForResult(intent, GitActivity.REQUEST_INIT);
                         }
                     })
-                    .setNegativeButton(this.getResources().getString(R.string.dialog_negative), new DialogInterface.OnClickListener() {
+                    .setNegativeButton(this.getResources().getString(R.string.dialog_cancel), new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialogInterface, int i) {
                             // do nothing :(
