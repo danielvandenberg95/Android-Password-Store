@@ -218,21 +218,11 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 
     public void handleClick(View view) {
         switch (view.getId()) {
-            case R.id.crypto_show_button:
-                decryptAndVerify(new Intent());
-                break;
-            case R.id.crypto_delete_button:
-//                deletePassword();
-                break;
-            case R.id.crypto_get_key_ids:
-                getKeyIds(new Intent());
-                break;
             case R.id.generate_password:
                 DialogFragment df = new pwgenDialogFragment();
                 df.show(getFragmentManager(), "generator");
             default:
                 // should not happen
-
         }
     }
 
