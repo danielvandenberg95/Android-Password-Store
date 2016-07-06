@@ -38,6 +38,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
 
 import java.io.File;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 
@@ -295,7 +296,7 @@ public class PasswordStore extends AppCompatActivity {
             }
         }
 
-        final String keyIds = settings.getString("openpgp_key_id_pref", "");
+        final Set<String> keyIds = settings.getStringSet("openpgp_key_ids_set", new HashSet<String>());
 
         if (keyIds.isEmpty())
             new AlertDialog.Builder(this)

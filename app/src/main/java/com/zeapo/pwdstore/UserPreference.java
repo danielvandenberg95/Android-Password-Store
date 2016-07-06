@@ -29,7 +29,6 @@ import com.zeapo.pwdstore.utils.PasswordRepository;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
-import org.openintents.openpgp.util.OpenPgpKeyPreference;
 
 import java.io.File;
 import java.io.IOException;
@@ -42,7 +41,6 @@ public class UserPreference extends AppCompatActivity {
     private final static int IMPORT_SSH_KEY = 1;
     private final static int IMPORT_PGP_KEY = 2;
     private final static int EDIT_GIT_INFO = 3;
-    private OpenPgpKeyPreference mKey;
     private final static int SELECT_GIT_DIRECTORY = 4;
 
     public static class PrefsFragment extends PreferenceFragment {
@@ -123,20 +121,6 @@ public class UserPreference extends AppCompatActivity {
                                         }
                                     }).show();
 
-                    return true;
-                }
-            });
-
-            callingActivity.mKey = (OpenPgpKeyPreference) findPreference("openpgp_key");
-
-            if (sharedPreferences.getString("openpgp_provider_list", null) != null) {
-                ((UserPreference) getActivity()).mKey.setOpenPgpProvider(sharedPreferences.getString("openpgp_provider_list", ""));
-            }
-
-            findPreference("openpgp_provider_list").setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
-                @Override
-                public boolean onPreferenceChange(Preference preference, Object o) {
-                    callingActivity.mKey.setOpenPgpProvider((String) o);
                     return true;
                 }
             });
@@ -384,14 +368,6 @@ public class UserPreference extends AppCompatActivity {
                 break;
                 case EDIT_GIT_INFO: {
 
-                }
-                break;
-                case OpenPgpKeyPreference.REQUEST_CODE_KEY_PREFERENCE: {
-                    if (mKey.handleOnActivityResult(requestCode, resultCode, data)) {
-                        // handled by OpenPgpKeyPreference
-                        PreferenceManager.getDefaultSharedPreferences(this.getApplicationContext()).edit().putLong("openpgp_sign_key", mKey.getValue()).apply();
-                        return;
-                    }
                 }
                 break;
                 case SELECT_GIT_DIRECTORY: {
