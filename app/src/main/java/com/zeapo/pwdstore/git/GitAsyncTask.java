@@ -2,17 +2,15 @@ package com.zeapo.pwdstore.git;
 
 import android.app.Activity;
 import android.app.ProgressDialog;
-import android.content.DialogInterface;
 import android.os.AsyncTask;
-import android.support.v7.app.AlertDialog;
+import android.util.Log;
 
 import com.zeapo.pwdstore.PasswordStore;
 import com.zeapo.pwdstore.R;
-import com.zeapo.pwdstore.utils.PasswordRepository;
 
-import org.apache.commons.io.FileUtils;
-import org.eclipse.jgit.api.CloneCommand;
+import org.eclipse.jgit.api.CommitCommand;
 import org.eclipse.jgit.api.GitCommand;
+import org.eclipse.jgit.api.StatusCommand;
 
 
 public class GitAsyncTask extends AsyncTask<GitCommand, Integer, String> {
@@ -20,9 +18,9 @@ public class GitAsyncTask extends AsyncTask<GitCommand, Integer, String> {
     private boolean finishOnEnd;
     private boolean refreshListOnEnd;
     private ProgressDialog dialog;
-    private Class operation;
+    private GitOperation operation;
 
-    public GitAsyncTask(Activity activity, boolean finishOnEnd, boolean refreshListOnEnd, Class operation) {
+    public GitAsyncTask(Activity activity, boolean finishOnEnd, boolean refreshListOnEnd, GitOperation operation) {
         this.activity = activity;
         this.finishOnEnd = finishOnEnd;
         this.refreshListOnEnd = refreshListOnEnd;
@@ -38,13 +36,25 @@ public class GitAsyncTask extends AsyncTask<GitCommand, Integer, String> {
     }
 
     @Override
-    protected String doInBackground(GitCommand... cmd) {
-        for (GitCommand aCmd : cmd) {
+    protected String doInBackground(GitCommand... commands) {
+        Integer nbChanges = null;
+        for (GitCommand command : commands) {
+            Log.d("doInBackground", "Executing the command <" + command.toString() + ">");
             try {
-                aCmd.call();
+                if (command instanceof StatusCommand) {
+                    // in case we have changes, we want to keep track of it
+                    nbChanges = ((StatusCommand) command).call().getChanged().size();
+                } else if (command instanceof CommitCommand) {
+                    // the previous status will eventually be used to avoid a commit
+                    if (nbChanges == null || nbChanges > 0)
+                        command.call();
+                } else {
+                    command.call();
+                }
+
             } catch (Exception e) {
                 e.printStackTrace();
-                return e.getMessage();
+                return e.getMessage() + "\nCaused by:\n" + e.getCause();
             }
         }
         return "";
@@ -54,8 +64,7 @@ public class GitAsyncTask extends AsyncTask<GitCommand, Integer, String> {
         if (this.dialog != null)
             try {
                 this.dialog.dismiss();
-            } catch (Exception e)
-            {
+            } catch (Exception e) {
                 // ignore
             }
 
@@ -63,26 +72,7 @@ public class GitAsyncTask extends AsyncTask<GitCommand, Integer, String> {
             result = "Unexpected error";
 
         if (!result.isEmpty()) {
-            new AlertDialog.Builder(activity).
-                    setTitle(activity.getResources().getString(R.string.jgit_error_dialog_title)).
-                    setMessage(activity.getResources().getString(R.string.jgit_error_dialog_text) + result).
-                    setPositiveButton(activity.getResources().getString(R.string.dialog_ok), new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface dialogInterface, int i) {
-                            if (operation.equals(CloneCommand.class)) {
-                                // if we were unable to finish the job
-                                try {
-                                    FileUtils.deleteDirectory(PasswordRepository.getWorkTree());
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-                            } else {
-                                activity.setResult(Activity.RESULT_CANCELED);
-                                activity.finish();
-                            }
-                        }
-                    }).show();
-
+            this.operation.onTaskEnded(result);
         } else {
             if (finishOnEnd) {
                 this.activity.setResult(Activity.RESULT_OK);

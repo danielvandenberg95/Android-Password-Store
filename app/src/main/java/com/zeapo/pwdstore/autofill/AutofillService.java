@@ -69,7 +69,7 @@ public class AutofillService extends AccessibilityService {
     public void setResultData(Intent data) { resultData = data; }
 
     public void setPickedPassword(String path) {
-        items.add(new File(PasswordRepository.getWorkTree() + "/" + path + ".gpg"));
+        items.add(new File(PasswordRepository.getRepositoryDirectory(getApplicationContext()) + "/" + path + ".gpg"));
         bindDecryptAndVerify();
     }
 
@@ -97,7 +97,8 @@ public class AutofillService extends AccessibilityService {
 
         // if returning to the source app from a successful AutofillActivity
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                && event.getPackageName().equals(packageName) && resultData != null) {
+                && event.getPackageName() != null && event.getPackageName().equals(packageName)
+                && resultData != null) {
             bindDecryptAndVerify();
         }
 
@@ -105,9 +106,9 @@ public class AutofillService extends AccessibilityService {
         // or if page changes in chrome
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                    && event.getSource() != null && event.getSource().getPackageName() != null
-                    && (event.getSource().getPackageName().equals("com.android.chrome")
-                        || event.getSource().getPackageName().equals("com.android.browser")))) {
+                    && event.getPackageName() != null
+                    && (event.getPackageName().equals("com.android.chrome")
+                        || event.getPackageName().equals("com.android.browser")))) {
             // there is a chance for getRootInActiveWindow() to return null at any time. save it.
             AccessibilityNodeInfo root = getRootInActiveWindow();
             webViewTitle = searchWebView(root);
@@ -136,8 +137,8 @@ public class AutofillService extends AccessibilityService {
         // nothing to do if not password field focus, field is keychain app
         if (!event.isPassword()
                 || event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                || event.getPackageName().equals("org.sufficientlysecure.keychain")
-                || event.getPackageName().equals("com.android.systemui")) {
+                || event.getPackageName() != null && event.getPackageName().equals("org.sufficientlysecure.keychain")
+                || event.getPackageName() != null && event.getPackageName().equals("com.android.systemui")) {
             dismissDialog(event);
             return;
         }
@@ -249,8 +250,9 @@ public class AutofillService extends AccessibilityService {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             dismiss = !getWindows().contains(window);
         } else {
-            dismiss = !(event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                    && event.getPackageName().toString().contains("inputmethod"));
+            dismiss = !(event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                    event.getPackageName() != null &&
+                    event.getPackageName().toString().contains("inputmethod"));
         }
         if (dismiss && dialog != null && dialog.isShowing()) {
             dialog.dismiss();
@@ -332,7 +334,7 @@ public class AutofillService extends AccessibilityService {
         String preferredPasswords[] = preference.split("\n");
         items = new ArrayList<>();
         for (String password : preferredPasswords) {
-            String path = PasswordRepository.getWorkTree() + "/" + password + ".gpg";
+            String path = PasswordRepository.getRepositoryDirectory(getApplicationContext()) + "/" + password + ".gpg";
             if (new File(path).exists()) {
                 items.add(new File(path));
             }
@@ -498,7 +500,7 @@ public class AutofillService extends AccessibilityService {
                         clipboard.setPrimaryClip(clip);
                         info.performAction(AccessibilityNodeInfo.ACTION_PASTE);
 
-                        clip = ClipData.newPlainText("autofill_pm", "MyPasswordIsDaBest!");
+                        clip = ClipData.newPlainText("autofill_pm", "");
                         clipboard.setPrimaryClip(clip);
                         if (settings.getBoolean("clear_clipboard_20x", false)) {
                             for (int i = 0; i < 19; i++) {

@@ -1,11 +1,11 @@
 package com.zeapo.pwdstore;
 
-import android.support.v4.app.Fragment;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.design.widget.FloatingActionButton;
+import android.support.v4.app.Fragment;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
@@ -14,8 +14,9 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
+import com.zeapo.pwdstore.crypto.PgpHandler;
+import com.zeapo.pwdstore.utils.FolderRecyclerAdapter;
 import com.zeapo.pwdstore.utils.PasswordItem;
-import com.zeapo.pwdstore.utils.PasswordRecyclerAdapter;
 import com.zeapo.pwdstore.utils.PasswordRepository;
 
 import java.io.File;
@@ -29,7 +30,7 @@ import java.util.Stack;
  * with a GridView.
  * <p />
  */
-public class PasswordFragment extends Fragment{
+public class SelectFolderFragment extends Fragment{
 
     public interface OnFragmentInteractionListener {
         public void onFragmentInteraction(PasswordItem item);
@@ -39,7 +40,7 @@ public class PasswordFragment extends Fragment{
     private Stack<ArrayList<PasswordItem>> passListStack;
     private Stack<File> pathStack;
     private Stack<Integer> scrollPosition;
-    private PasswordRecyclerAdapter recyclerAdapter;
+    private FolderRecyclerAdapter recyclerAdapter;
     private RecyclerView recyclerView;
     private RecyclerView.LayoutManager mLayoutManager;
     private OnFragmentInteractionListener mListener;
@@ -49,7 +50,7 @@ public class PasswordFragment extends Fragment{
      * Mandatory empty constructor for the fragment manager to instantiate the
      * fragment (e.g. upon screen orientation changes).
      */
-    public PasswordFragment() {   }
+    public SelectFolderFragment() {   }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -60,7 +61,7 @@ public class PasswordFragment extends Fragment{
         passListStack = new Stack<ArrayList<PasswordItem>>();
         scrollPosition = new Stack<Integer>();
         pathStack = new Stack<File>();
-        recyclerAdapter = new PasswordRecyclerAdapter((PasswordStore) getActivity(), mListener,
+        recyclerAdapter = new FolderRecyclerAdapter((PgpHandler) getActivity(), mListener,
                                                       PasswordRepository.getPasswords(new File(path), PasswordRepository.getRepositoryDirectory(getActivity())));
     }
 
@@ -113,12 +114,6 @@ public class PasswordFragment extends Fragment{
                         recyclerAdapter.addAll(PasswordRepository.getPasswords(item.getFile(), PasswordRepository.getRepositoryDirectory(context)));
 
                         ((AppCompatActivity) getActivity()).getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-                    } else {
-                        if (getArguments().getBoolean("matchWith", false)) {
-                            ((PasswordStore) getActivity()).matchPasswordWithApp(item);
-                        } else {
-                            ((PasswordStore) getActivity()).decryptPassword(item);
-                        }
                     }
                 }
 

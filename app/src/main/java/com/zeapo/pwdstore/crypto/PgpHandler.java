@@ -11,15 +11,21 @@ import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.SystemClock;
 import android.preference.PreferenceManager;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
+import android.text.method.PasswordTransformationMethod;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
@@ -27,7 +33,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.google.common.primitives.Longs;
+import com.zeapo.pwdstore.BuildConfig;
 import com.zeapo.pwdstore.R;
+import com.zeapo.pwdstore.SelectFolderFragment;
 import com.zeapo.pwdstore.UserPreference;
 import com.zeapo.pwdstore.pwgenDialogFragment;
 import com.zeapo.pwdstore.utils.PasswordRepository;
@@ -49,13 +57,15 @@ import java.util.HashSet;
 import java.util.Set;
 
 public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConnection.OnBound {
-
-
+    private static DelayShow delayTask;
     private OpenPgpServiceConnection mServiceConnection;
     private Set<String> keyIDs = new HashSet<>();
     SharedPreferences settings;
     private Activity activity;
     ClipboardManager clipboard;
+
+    SelectFolderFragment passwordList;
+    private Intent selectFolderData;
 
     private boolean registered;
 
@@ -66,6 +76,9 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
     public static final int REQUEST_CODE_GET_KEY = 9914;
     public static final int REQUEST_CODE_GET_KEY_IDS = 9915;
     public static final int REQUEST_CODE_EDIT = 9916;
+    public static final int REQUEST_CODE_SELECT_FOLDER = 9917;
+
+    private String decodedPassword = "";
 
     public final class Constants {
         public static final String TAG = "Keychain";
@@ -125,10 +138,15 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
-        if (getIntent().getStringExtra("Operation").equals("ENCRYPT")) {
-            getMenuInflater().inflate(R.menu.pgp_handler_new_password, menu);
-        } else {
-            getMenuInflater().inflate(R.menu.pgp_handler, menu);
+        switch (getIntent().getStringExtra("Operation")){
+            case "ENCRYPT":
+                getMenuInflater().inflate(R.menu.pgp_handler_new_password, menu);
+                break;
+            case "SELECTFOLDER":
+                getMenuInflater().inflate(R.menu.pgp_handler_select_folder, menu);
+                break;
+            default:
+                getMenuInflater().inflate(R.menu.pgp_handler, menu);
         }
         return true;
     }
@@ -160,8 +178,20 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
                 setResult(RESULT_CANCELED);
                 finish();
                 return true;
+            case R.id.crypto_select:
+                selectFolder();
+                break;
         }
         return super.onOptionsItemSelected(item);
+    }
+
+    private void selectFolder() {
+        if (selectFolderData == null || passwordList == null){
+            Log.wtf(Constants.TAG,"Folder selected while the app didn't ask for one to be selected?");
+        }
+        selectFolderData.putExtra("SELECTED_FOLDER_PATH",passwordList.getCurrentDir().getAbsolutePath());
+        setResult(RESULT_OK,selectFolderData);
+        finish();
     }
 
     public void editPassword() {
@@ -208,15 +238,9 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
         if (findViewById(R.id.share_password_as_plaintext) == null)
             return;
 
-        final TextView cryptoPasswordShow = (TextView) findViewById(R.id.crypto_password_show);
-        if (cryptoPasswordShow == null) {
-            return;
-        }
-        final CharSequence text = cryptoPasswordShow.getText();
-
         Intent sendIntent = new Intent();
         sendIntent.setAction(Intent.ACTION_SEND);
-        sendIntent.putExtra(Intent.EXTRA_TEXT, text);
+        sendIntent.putExtra(Intent.EXTRA_TEXT, decodedPassword);
         sendIntent.setType("text/plain");
         startActivity(Intent.createChooser(sendIntent, getResources().getText(R.string.send_plaintext_password_to)));//Always show a picker to give the user a chance to cancel
     }
@@ -226,13 +250,11 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
         if (findViewById(R.id.crypto_password_show) == null)
             return;
 
-        final TextView cryptoPasswordShow = (TextView) findViewById(R.id.crypto_password_show);
-        if (cryptoPasswordShow == null) {
-            return;
-        }
+        setTimer();
 
-        ClipData clip = ClipData.newPlainText("pgp_handler_result_pm", cryptoPasswordShow.getText());
+        ClipData clip = ClipData.newPlainText("pgp_handler_result_pm", decodedPassword);
         clipboard.setPrimaryClip(clip);
+
         try {
             showToast(this.getResources().getString(R.string.clipboard_beginning_toast_text)
                     + " " + Integer.parseInt(settings.getString("general_show_time", "45")) + " "
@@ -259,6 +281,7 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
                 DialogFragment df = new pwgenDialogFragment();
                 df.show(getFragmentManager(), "generator");
             default:
+                Log.wtf(Constants.TAG,"This should not happen.... PgpHandler.java#handleClick(View) default reached.");
                 // should not happen
 
         }
@@ -292,46 +315,41 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 
     public class DelayShow extends AsyncTask<Void, Integer, Boolean> {
         ProgressBar pb;
-        int current, SHOW_TIME;
-        boolean showPassword;
+        boolean clearClipboard = true;
+        int current, showTime;
 
         @Override
         protected void onPreExecute() {
             try {
-                SHOW_TIME = Integer.parseInt(settings.getString("general_show_time", "45"));
+                showTime = Integer.parseInt(settings.getString("general_show_time", "45"));
             } catch (NumberFormatException e) {
-                SHOW_TIME = 45;
+                showTime = 45;
             }
             current = 0;
 
-            showPassword = settings.getBoolean("show_password", true);
-            if (showPassword) {
-                LinearLayout container = (LinearLayout) findViewById(R.id.crypto_container);
-                container.setVisibility(View.VISIBLE);
+            LinearLayout container = (LinearLayout) findViewById(R.id.crypto_container);
+            container.setVisibility(View.VISIBLE);
 
-                TextView extraText = (TextView) findViewById(R.id.crypto_extra_show);
+            TextView extraText = (TextView) findViewById(R.id.crypto_extra_show);
 
-                if (extraText.getText().length() != 0)
-                    findViewById(R.id.crypto_extra_show_layout).setVisibility(View.VISIBLE);
+            if (extraText.getText().length() != 0)
+                findViewById(R.id.crypto_extra_show_layout).setVisibility(View.VISIBLE);
 
-                if (SHOW_TIME == 0) {
-                    // treat 0 as forever, and the user must exit and/or clear clipboard on their own
-                    cancel(true);
-                } else {
-                    this.pb = (ProgressBar) findViewById(R.id.pbLoading);
-                    this.pb.setMax(SHOW_TIME);
-                }
+            if (showTime == 0) {
+                // treat 0 as forever, and the user must exit and/or clear clipboard on their own
+                cancel(true);
+            } else {
+                this.pb = (ProgressBar) findViewById(R.id.pbLoading);
+                this.pb.setMax(showTime);
             }
         }
 
         @Override
         protected Boolean doInBackground(Void... params) {
-            while (current < SHOW_TIME) {
+            while (current < showTime) {
                 SystemClock.sleep(1000);
                 current++;
-                if (showPassword) {
-                    publishProgress(current);
-                }
+                publishProgress(current);
             }
             return true;
         }
@@ -339,17 +357,25 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
         @Override
         protected void onPostExecute(Boolean b) {
             // only clear the clipboard if we automatically copied the password to it
-            if (settings.getBoolean("copy_on_decrypt", true)) {
-                ClipData clip = ClipData.newPlainText("pgp_handler_result_pm", "MyPasswordIsDaBest!");
+            if (settings.getBoolean("copy_on_decrypt", true) && clearClipboard) {
+                Log.d("DELAY_SHOW", "Clearing the clipboard");
+                ClipData clip = ClipData.newPlainText("pgp_handler_result_pm", "");
                 clipboard.setPrimaryClip(clip);
                 if (settings.getBoolean("clear_clipboard_20x", false)) {
+                    Handler handler = new Handler();
                     for (int i = 0; i < 19; i++) {
-                        clip = ClipData.newPlainText(String.valueOf(i), String.valueOf(i));
-                        clipboard.setPrimaryClip(clip);
+                        final String count = String.valueOf(i);
+                        handler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                clipboard.setPrimaryClip(ClipData.newPlainText(count, count));
+                            }
+                        }, i*500);
                     }
                 }
             }
-            if (showPassword && findViewById(R.id.crypto_password_show) != null) {
+            decodedPassword = "";
+            if (findViewById(R.id.crypto_password_show) != null) {
                 // clear password; if decrypt changed to encrypt layout via edit button, no need
                 ((TextView) findViewById(R.id.crypto_password_show)).setText("");
                 ((TextView) findViewById(R.id.crypto_extra_show)).setText("");
@@ -362,11 +388,12 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 
         @Override
         protected void onProgressUpdate(Integer... values) {
-            if (showPassword) {
-                this.pb.setProgress(values[0]);
-            }
+            this.pb.setProgress(values[0]);
         }
 
+        public void setClearClipboard(boolean value) {
+            clearClipboard = value;
+        }
     }
 
 
@@ -407,6 +434,39 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
         }
     }
 
+    private void selectFolder(Intent data) {
+
+        if (data.getStringExtra("Operation") == null || !data.getStringExtra("Operation").equals("SELECTFOLDER")){
+            Log.e(Constants.TAG,"PgpHandler#selectFolder(Intent) triggered with incorrect intent.");
+            if (BuildConfig.DEBUG){
+                throw new UnsupportedOperationException("Triggered with incorrect intent.");
+            }
+            return;
+        }
+
+        Log.d(Constants.TAG,"PgpHandler#selectFolder(Intent).");
+
+
+        FragmentManager fragmentManager = getSupportFragmentManager();
+        FragmentTransaction fragmentTransaction = fragmentManager.beginTransaction();
+
+
+        passwordList = new SelectFolderFragment();
+        Bundle args = new Bundle();
+        args.putString("Path", PasswordRepository.getRepositoryDirectory(getApplicationContext()).getAbsolutePath());
+
+        passwordList.setArguments(args);
+
+        getSupportActionBar().show();
+
+        fragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE);
+
+        fragmentTransaction.replace(R.id.pgp_handler_linearlayout, passwordList, "PasswordsList");
+        fragmentTransaction.commit();
+
+        this.selectFolderData = data;
+    }
+
     public class PgpCallback implements OpenPgpApi.IOpenPgpCallback {
         boolean returnToCiphertextField;
         ByteArrayOutputStream os;
@@ -424,6 +484,7 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
             switch (result.getIntExtra(OpenPgpApi.RESULT_CODE, OpenPgpApi.RESULT_CODE_ERROR)) {
                 case OpenPgpApi.RESULT_CODE_SUCCESS: {
                     // encrypt/decrypt/sign/verify
+                    final TextView textViewPassword = (TextView) findViewById(R.id.crypto_password_show);
                     if (requestCode == REQUEST_CODE_DECRYPT_AND_VERIFY && os != null) {
                         try {
                             if (returnToCiphertextField) {
@@ -431,17 +492,25 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
                                 findViewById(R.id.progress_bar_label).setVisibility(View.GONE);
 
                                 boolean showPassword = settings.getBoolean("show_password", true);
-
-                                if (showPassword) {
-                                    findViewById(R.id.crypto_container).setVisibility(View.VISIBLE);
-                                }
+                                findViewById(R.id.crypto_container).setVisibility(View.VISIBLE);
 
                                 Typeface monoTypeface = Typeface.createFromAsset(getAssets(), "fonts/sourcecodepro.ttf");
-                                String[] passContent = os.toString("UTF-8").split("\n");
-                                ((TextView) findViewById(R.id.crypto_password_show))
+                                final String[] passContent = os.toString("UTF-8").split("\n");
+                                textViewPassword
                                         .setTypeface(monoTypeface);
-                                ((TextView) findViewById(R.id.crypto_password_show))
+                                textViewPassword
                                         .setText(passContent[0]);
+
+                                Button toggleVisibilityButton = (Button) findViewById(R.id.crypto_password_toggle_show);
+                                toggleVisibilityButton.setVisibility(showPassword?View.GONE:View.VISIBLE);
+                                textViewPassword.setTransformationMethod(showPassword?null:new HoldToShowPasswordTransformation(toggleVisibilityButton, new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        textViewPassword
+                                                .setText(passContent[0]);
+                                    }
+                                }));
+                                decodedPassword = passContent[0];
 
                                 String extraContent = os.toString("UTF-8").replaceFirst(".*\n", "");
                                 if (extraContent.length() != 0) {
@@ -453,13 +522,6 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 
                                 if (settings.getBoolean("copy_on_decrypt", true)) {
                                     copyToClipBoard();
-                                }
-
-                                new DelayShow().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-                                if (!showPassword) {
-                                    // stop here, but still need DelayShow to clear clipboard
-                                    activity.setResult(RESULT_CANCELED);
-                                    activity.finish();
                                 }
                             } else {
                                 Log.d("PGPHANDLER", "Error message after decrypt : " + os.toString());
@@ -515,10 +577,11 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 
                                 Typeface monoTypeface = Typeface.createFromAsset(getAssets(), "fonts/sourcecodepro.ttf");
                                 String[] passContent = os.toString("UTF-8").split("\n");
-                                ((TextView) findViewById(R.id.crypto_password_show))
+                                textViewPassword
                                         .setTypeface(monoTypeface);
-                                ((TextView) findViewById(R.id.crypto_password_show))
+                                textViewPassword
                                         .setText(passContent[0]);
+                                decodedPassword = passContent[0];
 
                                 String extraContent = os.toString("UTF-8").replaceFirst(".*\n", "");
                                 if (extraContent.length() != 0) {
@@ -664,24 +727,30 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
         Log.i("PGP", "ISBOUND!!");
 
         Bundle extra = getIntent().getExtras();
-        if (extra.getString("Operation").equals("DECRYPT")) {
+        final String operation = extra.getString("Operation");
+        if (operation == null){
+            return;
+        }
+        if (operation.equals("DECRYPT")) {
             setContentView(R.layout.decrypt_layout);
             ((TextView) findViewById(R.id.crypto_password_file)).setText(extra.getString("NAME"));
-            String cat = new File(extra.getString("FILE_PATH").replace(PasswordRepository.getWorkTree().getAbsolutePath(), ""))
-                    .getParentFile().getName();
+            String path = extra
+                    .getString("FILE_PATH")
+                    .replace(PasswordRepository.getRepositoryDirectory(getApplicationContext()).getAbsolutePath(), "");
+            String cat = new File(path).getParentFile().getName();
 
             ((TextView) findViewById(R.id.crypto_password_category)).setText(cat + "/");
             decryptAndVerify(new Intent());
-        } else if (extra.getString("Operation").equals("ENCRYPT")) {
+        } else if (operation.equals("ENCRYPT")) {
             setContentView(R.layout.encrypt_layout);
             Typeface monoTypeface = Typeface.createFromAsset(getAssets(), "fonts/sourcecodepro.ttf");
             ((EditText) findViewById(R.id.crypto_password_edit)).setTypeface(monoTypeface);
             ((EditText) findViewById(R.id.crypto_extra_edit)).setTypeface(monoTypeface);
             String cat = extra.getString("FILE_PATH");
-            cat = cat.replace(PasswordRepository.getWorkTree().getAbsolutePath(), "");
+            cat = cat.replace(PasswordRepository.getRepositoryDirectory(getApplicationContext()).getAbsolutePath(), "");
             cat = cat + "/";
             ((TextView) findViewById(R.id.crypto_password_category)).setText(cat);
-        } else if (extra.getString("Operation").equals("GET_KEY_ID")) {
+        } else if (operation.equals("GET_KEY_ID")) {
             getKeyIds(new Intent());
 
 //            setContentView(R.layout.key_id);
@@ -689,14 +758,17 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 //                String keys = keyIDs.split(",").length > 1 ? keyIDs : keyIDs.split(",")[0];
 //                ((TextView) findViewById(R.id.crypto_key_ids)).setText(keys);
 //            }
-        } else if (extra.getString("Operation").equals("EDIT")) {
+        } else if (operation.equals("EDIT")) {
             setContentView(R.layout.decrypt_layout);
             ((TextView) findViewById(R.id.crypto_password_file)).setText(extra.getString("NAME"));
-            String cat = new File(extra.getString("FILE_PATH").replace(PasswordRepository.getWorkTree().getAbsolutePath(), ""))
+            String cat = new File(extra.getString("FILE_PATH").replace(PasswordRepository.getRepositoryDirectory(getApplicationContext()).getAbsolutePath(), ""))
                     .getParentFile().getName();
 
             ((TextView) findViewById(R.id.crypto_password_category)).setText(cat + "/");
             edit(new Intent());
+        } else if (operation.equals("SELECTFOLDER")){
+            setContentView(R.layout.select_folder_layout);
+            selectFolder(getIntent());
         }
     }
 
@@ -705,4 +777,43 @@ public class PgpHandler extends AppCompatActivity implements OpenPgpServiceConne
 
     }
 
+    private class HoldToShowPasswordTransformation extends PasswordTransformationMethod implements View.OnTouchListener {
+        private final Runnable onToggle;
+        private boolean shown = false;
+
+        private HoldToShowPasswordTransformation(Button button, Runnable onToggle) {
+            this.onToggle = onToggle;
+            button.setOnTouchListener(this);
+        }
+
+        @Override
+        public CharSequence getTransformation(CharSequence charSequence, View view) {
+            return shown ? charSequence : super.getTransformation("12345", view);
+        }
+
+        @Override
+        public boolean onTouch(View view, MotionEvent motionEvent) {
+            switch (motionEvent.getAction()) {
+                case MotionEvent.ACTION_DOWN:
+                    shown = true;
+                    onToggle.run();
+                    break;
+                case MotionEvent.ACTION_UP:
+                    shown = false;
+                    onToggle.run();
+                    break;
+            }
+            return false;
+        }
+    }
+
+    private void setTimer() {
+        // If a task already exist, let it finish without clearing the clipboard
+        if (delayTask != null) {
+            delayTask.setClearClipboard(false);
+        }
+
+        delayTask = new DelayShow();
+        delayTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
 }
